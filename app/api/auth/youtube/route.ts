@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "node:crypto";
 
 export async function GET() {
   const clientId = process.env.YOUTUBE_CLIENT_ID;
-  const redirectUri = process.env.YOUTUBE_REDIRECT_URI || "http://localhost:3000/api/auth/callback/youtube";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const redirectUri = process.env.YOUTUBE_REDIRECT_URI || `${appUrl}/api/auth/callback/youtube`;
 
   if (!clientId) {
-    // If no Client ID configured, redirect to settings with error flag
-    return NextResponse.redirect(new URL("/settings?error=missing_client_id", "http://localhost:3000"));
+    return NextResponse.redirect(new URL("/settings?error=missing_client_id", appUrl));
   }
 
+  const state = randomBytes(32).toString("hex");
   const scopes = [
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
@@ -21,6 +23,16 @@ export async function GET() {
   authUrl.searchParams.set("scope", scopes);
   authUrl.searchParams.set("access_type", "offline");
   authUrl.searchParams.set("prompt", "consent");
+  authUrl.searchParams.set("state", state);
 
-  return NextResponse.redirect(authUrl.toString());
+  const response = NextResponse.redirect(authUrl.toString());
+  response.cookies.set("youtube_oauth_state", state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 10 * 60,
+    path: "/",
+  });
+
+  return response;
 }
