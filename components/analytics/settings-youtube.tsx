@@ -2,46 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertCircle,
-  ArrowRight,
-  CheckCircle2,
-  Clock,
-  Database,
-  Eye,
-  Key,
-  Lock,
-  Radio,
-  RefreshCw,
-  ShieldCheck,
-  Sparkles,
-  ThumbsUp,
-  UserCheck,
-  Users,
-  Video,
-  Trash2,
-  Plus,
-  Loader2,
-} from "lucide-react";
-
+import { AlertCircle, ArrowRight, CheckCircle2, Clock, Database, Eye, Key, Lock, LogOut, Radio, RefreshCw, ShieldCheck, Sparkles, ThumbsUp, UserCheck, Users, Video, Trash2, Plus, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
-import { useAuth } from "@/components/auth-provider";
 import { PRIVACY_COMPLIANCE_RULES, type OperatingMode } from "@/lib/youtube/types";
 
-type ChannelConnection = {
-  id: string;
-  channel_name: string;
-  channel_handle: string | null;
-  youtube_channel_id: string | null;
-  connected: boolean;
-  subscriber_count: number;
-  video_count: number;
-  total_views: number;
-  created_at: string;
-};
+type ChannelConnection = { id: string; channel_name: string; channel_handle: string | null; youtube_channel_id: string | null; connected: boolean; subscriber_count: number; video_count: number; total_views: number; created_at: string };
+type YouTubeStatus = { connected: boolean; channel: { id: string; title: string; customUrl: string; subscriberCount: number } | null };
+type Telemetry = { channelId: string; title: string; customUrl: string; publishedAt: string; viewCount: number; subscriberCount: number; videoCount: number; watchTimeHours: number | null; avgViewDurationSeconds: number | null; avgRetentionPercentage: number | null; likes: number | null; comments: number | null; shares: number | null; subscriberGainLoss: { gained: number | null; lost: number | null } };
+
+const DEMO_TELEMETRY: Telemetry = { channelId: "DEMO_CHANNEL_001", title: "TubePulse AI Creator Demo Channel", customUrl: "@tubepulse_demo", publishedAt: "2025-01-10", viewCount: 842000, subscriberCount: 84200, videoCount: 20, watchTimeHours: 8950, avgViewDurationSeconds: 348, avgRetentionPercentage: 58.2, likes: 42100, comments: 6800, shares: 4100, subscriberGainLoss: { gained: 1850, lost: 420 } };
 
 export function SettingsYouTubeAnalytics() {
-  const { user } = useAuth();
   const [mode, setMode] = useState<OperatingMode>("demo");
   const [channels, setChannels] = useState<ChannelConnection[]>([]);
   const [loadingChannels, setLoadingChannels] = useState(true);
@@ -51,449 +22,91 @@ export function SettingsYouTubeAnalytics() {
   const [savingChannel, setSavingChannel] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [youtubeStatus, setYoutubeStatus] = useState<YouTubeStatus>({ connected: false, channel: null });
+  const [loadingYouTube, setLoadingYouTube] = useState(true);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [telemetry, setTelemetry] = useState<Telemetry>(DEMO_TELEMETRY);
+  const [loadingTelemetry, setLoadingTelemetry] = useState(false);
 
-  useEffect(() => {
-    const savedMode = localStorage.getItem("tubepulse_mode");
-    if (savedMode === "connected" || savedMode === "demo") {
-      setMode(savedMode as OperatingMode);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadChannels();
-  }, []);
+  useEffect(() => { const savedMode = localStorage.getItem("tubepulse_mode"); if (savedMode === "connected" || savedMode === "demo") setMode(savedMode as OperatingMode); }, []);
+  useEffect(() => { loadChannels(); refreshYouTubeStatus(); }, []);
+  useEffect(() => { if (mode === "connected") loadConnectedTelemetry(); else setTelemetry(DEMO_TELEMETRY); }, [mode, youtubeStatus.connected]);
 
   const loadChannels = async () => {
     setLoadingChannels(true);
-    const { data, error: queryError } = await supabase
-      .from("channel_connections")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (queryError) {
-      setError(queryError.message);
-    } else {
-      setChannels(data as ChannelConnection[]);
-    }
+    const { data, error: queryError } = await supabase.from("channel_connections").select("*").order("created_at", { ascending: false });
+    if (queryError) setError(queryError.message); else setChannels((data || []) as ChannelConnection[]);
     setLoadingChannels(false);
   };
 
+  const refreshYouTubeStatus = async () => {
+    setLoadingYouTube(true);
+    try {
+      const response = await fetch("/api/auth/youtube/status", { cache: "no-store" });
+      if (!response.ok) throw new Error("Unable to check YouTube connection status.");
+      setYoutubeStatus(await response.json());
+    } catch (statusError) { setError(statusError instanceof Error ? statusError.message : "Unable to check YouTube connection status."); }
+    finally { setLoadingYouTube(false); }
+  };
+
+  const loadConnectedTelemetry = async () => {
+    if (!youtubeStatus.connected) return;
+    setLoadingTelemetry(true); setError(null);
+    try {
+      const [statsResponse, analyticsResponse] = await Promise.all([fetch("/api/youtube/stats", { cache: "no-store" }), fetch("/api/youtube/analytics", { cache: "no-store" })]);
+      const stats = await statsResponse.json().catch(() => ({}));
+      const analytics = await analyticsResponse.json().catch(() => ({}));
+      if (!statsResponse.ok) throw new Error(stats.error || "Unable to load YouTube channel statistics.");
+      if (!analyticsResponse.ok) throw new Error(analytics.error || "Unable to load YouTube analytics.");
+      const metrics = analytics.metrics || {};
+      setTelemetry({ channelId: stats.data?.channelId || youtubeStatus.channel?.id || "", title: stats.data?.title || youtubeStatus.channel?.title || "Connected YouTube Channel", customUrl: stats.data?.customUrl || youtubeStatus.channel?.customUrl || "", publishedAt: stats.data?.publishedAt || "", viewCount: Number(stats.data?.viewCount || 0), subscriberCount: Number(stats.data?.subscriberCount || 0), videoCount: Number(stats.data?.videoCount || 0), watchTimeHours: Number(metrics.estimatedMinutesWatched || 0) / 60, avgViewDurationSeconds: Number(metrics.averageViewDurationSeconds || 0), avgRetentionPercentage: null, likes: null, comments: null, shares: null, subscriberGainLoss: { gained: Number(metrics.subscribersGained || 0), lost: Number(metrics.subscribersLost || 0) } });
+    } catch (telemetryError) { setError(telemetryError instanceof Error ? telemetryError.message : "Unable to load connected YouTube telemetry."); }
+    finally { setLoadingTelemetry(false); }
+  };
+
   const handleAddChannel = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newChannelName.trim()) return;
-    setSavingChannel(true);
-    setError(null);
-
-    const { data, error: insertError } = await supabase
-      .from("channel_connections")
-      .insert({
-        channel_name: newChannelName.trim(),
-        channel_handle: newChannelHandle.trim() || null,
-      })
-      .select()
-      .single();
-
-    if (insertError) {
-      setError(insertError.message);
-    } else {
-      setChannels([data as ChannelConnection, ...channels]);
-      setNewChannelName("");
-      setNewChannelHandle("");
-      setShowAddForm(false);
-      setSaveStatus("Channel added successfully.");
-      setTimeout(() => setSaveStatus(null), 4000);
-    }
+    e.preventDefault(); if (!newChannelName.trim()) return; setSavingChannel(true); setError(null);
+    const { data, error: insertError } = await supabase.from("channel_connections").insert({ channel_name: newChannelName.trim(), channel_handle: newChannelHandle.trim() || null }).select().single();
+    if (insertError) setError(insertError.message); else { setChannels([data as ChannelConnection, ...channels]); setNewChannelName(""); setNewChannelHandle(""); setShowAddForm(false); setSaveStatus("Channel added successfully."); setTimeout(() => setSaveStatus(null), 4000); }
     setSavingChannel(false);
   };
 
   const handleDeleteChannel = async (id: string) => {
-    const { error: deleteError } = await supabase
-      .from("channel_connections")
-      .delete()
-      .eq("id", id);
-
-    if (deleteError) {
-      setError(deleteError.message);
-    } else {
-      setChannels(channels.filter((c) => c.id !== id));
-    }
+    const { error: deleteError } = await supabase.from("channel_connections").delete().eq("id", id);
+    if (deleteError) setError(deleteError.message); else setChannels(channels.filter((c) => c.id !== id));
   };
 
-  const telemetry = useMemo(() => {
-    return {
-      channelId: "DEMO_CHANNEL_001",
-      title: "TubePulse AI Creator Demo Channel",
-      customUrl: "@tubepulse_demo",
-      publishedAt: "2025-01-10",
-      viewCount: 842000,
-      subscriberCount: 84200,
-      videoCount: 20,
-      watchTimeHours: 8950,
-      avgViewDurationSeconds: 348,
-      avgRetentionPercentage: 58.2,
-      likes: 42100,
-      comments: 6800,
-      shares: 4100,
-      subscriberGainLoss: { gained: 1850, lost: 420 },
-      returningViewerMetricStatus: "Aggregated Channel Estimate" as const,
-    };
-  }, []);
+  const handleDisconnect = async () => {
+    setDisconnecting(true); setError(null);
+    try {
+      const response = await fetch("/api/auth/youtube/disconnect", { method: "POST" });
+      if (!response.ok) throw new Error("Unable to disconnect YouTube.");
+      setYoutubeStatus({ connected: false, channel: null }); setMode("demo"); setTelemetry(DEMO_TELEMETRY); localStorage.setItem("tubepulse_mode", "demo"); window.dispatchEvent(new Event("tubepulse_mode_changed")); setSaveStatus("YouTube channel disconnected."); setTimeout(() => setSaveStatus(null), 4000);
+    } catch (disconnectError) { setError(disconnectError instanceof Error ? disconnectError.message : "Unable to disconnect YouTube."); }
+    finally { setDisconnecting(false); }
+  };
+
+  const connectionLabel = loadingYouTube ? "Checking..." : youtubeStatus.connected ? "Connected" : "Not Connected";
+  const derivedNetGain = useMemo(() => telemetry.subscriberGainLoss.gained !== null && telemetry.subscriberGainLoss.lost !== null ? telemetry.subscriberGainLoss.gained - telemetry.subscriberGainLoss.lost : null, [telemetry]);
 
   return (
-    <main className="min-h-screen bg-[#020817] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.24em] font-semibold text-rose-400">System Integration</div>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight text-white sm:text-4xl">Settings & YouTube Integration</h1>
-            <p className="mt-2 max-w-3xl text-sm text-slate-400 leading-relaxed">
-              Manage your channel connections and configure integration settings for YouTube Data API v3 & YouTube Analytics API.
-            </p>
-          </div>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
-          >
-            Dashboard <ArrowRight className="h-4 w-4" />
-          </Link>
-        </div>
+    <main className="min-h-screen bg-[#020817] px-4 py-8 text-slate-100 sm:px-6 lg:px-8"><div className="mx-auto max-w-7xl space-y-8">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><div className="text-[10px] uppercase tracking-[0.24em] font-semibold text-rose-400">System Integration</div><h1 className="mt-2 text-3xl font-bold tracking-tight text-white sm:text-4xl">Settings & YouTube Integration</h1><p className="mt-2 max-w-3xl text-sm text-slate-400 leading-relaxed">Manage your channel connections and configure integration settings for YouTube Data API v3 & YouTube Analytics API.</p></div><Link href="/" className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800">Dashboard <ArrowRight className="h-4 w-4" /></Link></div>
+      {error && <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300"><div className="flex items-center gap-2 min-w-0"><AlertCircle className="h-4 w-4 shrink-0" /><span>{error}</span></div><button onClick={() => setError(null)} className="shrink-0 text-xs text-rose-200 hover:text-white">Dismiss</button></div>}
+      {saveStatus && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300"><CheckCircle2 className="h-4 w-4 shrink-0" /><span>{saveStatus}</span></div>}
 
-        {error && (
-          <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-6"><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/30"><Video className="h-5 w-5" /></div><div><h2 className="text-lg font-bold text-white">Active Operating Mode</h2><p className="text-xs text-slate-400">Demo mode uses synthetic data. Connected mode uses the authenticated YouTube APIs.</p></div></div><div className="flex flex-wrap items-center gap-2"><div className="inline-flex items-center gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800"><button onClick={() => { setMode("demo"); localStorage.setItem("tubepulse_mode", "demo"); window.dispatchEvent(new Event("tubepulse_mode_changed")); }} className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${mode === "demo" ? "bg-sky-500 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"}`}><Sparkles className="h-3.5 w-3.5" /> Demo Mode</button><button disabled={!youtubeStatus.connected} onClick={() => { if (!youtubeStatus.connected) return; setMode("connected"); localStorage.setItem("tubepulse_mode", "connected"); window.dispatchEvent(new Event("tubepulse_mode_changed")); }} className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${mode === "connected" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"}`}><Radio className="h-3.5 w-3.5" /> Connected Mode</button></div>{youtubeStatus.connected && <button onClick={handleDisconnect} disabled={disconnecting} className="inline-flex items-center gap-2 rounded-lg border border-rose-500/30 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/10 disabled:opacity-50">{disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}{disconnecting ? "Disconnecting..." : "Disconnect"}</button>}</div></div>
+      <div className="grid gap-3 md:grid-cols-2"><div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-300"><div className="flex items-center gap-2"><Database className="h-4 w-4 text-sky-400" /><span>Active Telemetry Source</span></div><strong className={`mt-2 block ${mode === "connected" ? "text-emerald-300" : "text-sky-300"}`}>{mode === "connected" ? "Official YouTube Data API v3 & Analytics API" : "Synthetic Demo Telemetry"}</strong></div><div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-300"><div className="flex items-center gap-2">{youtubeStatus.connected ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <AlertCircle className="h-4 w-4 text-amber-400" />}<span>YouTube OAuth Status</span></div><strong className={`mt-2 block ${youtubeStatus.connected ? "text-emerald-300" : "text-amber-300"}`}>{connectionLabel}</strong></div></div>{youtubeStatus.channel && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-xs"><div className="font-semibold text-white">{youtubeStatus.channel.title}</div><div className="mt-1 text-slate-400">{youtubeStatus.channel.customUrl || youtubeStatus.channel.id} · {youtubeStatus.channel.subscriberCount.toLocaleString()} subscribers</div></div>}</section>
 
-        {saveStatus && (
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span>{saveStatus}</span>
-          </div>
-        )}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-5"><div className="flex items-center justify-between"><h2 className="text-lg font-bold text-white flex items-center gap-2"><Video className="h-5 w-5 text-sky-400" /> Your Channel Connections</h2><button onClick={() => setShowAddForm(!showAddForm)} className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-400"><Plus className="h-4 w-4" /> Add Channel</button></div>
+      {showAddForm && <form onSubmit={handleAddChannel} className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3"><div><label className="block text-sm font-medium text-slate-300 mb-1.5">Channel Name</label><input type="text" value={newChannelName} onChange={(e) => setNewChannelName(e.target.value)} required placeholder="e.g. Creator Growth Lab" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none" /></div><div><label className="block text-sm font-medium text-slate-300 mb-1.5">YouTube Handle (optional)</label><input type="text" value={newChannelHandle} onChange={(e) => setNewChannelHandle(e.target.value)} placeholder="@yourchannel" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none" /></div><div className="flex items-center gap-2"><button type="submit" disabled={savingChannel} className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-sky-400 disabled:opacity-50">{savingChannel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{savingChannel ? "Saving..." : "Save Channel"}</button><button type="button" onClick={() => setShowAddForm(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 transition hover:bg-slate-800">Cancel</button></div></form>}
+      {loadingChannels ? <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-slate-500" /></div> : channels.length === 0 ? <div className="rounded-xl border border-slate-800 bg-slate-950 p-8 text-center"><Video className="mx-auto h-8 w-8 text-slate-600" /><p className="mt-3 text-sm text-slate-400">No saved channel records yet. Use Google OAuth above to connect the authenticated channel.</p></div> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{channels.map((channel) => <div key={channel.id} className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3"><div className="flex items-start justify-between"><div><h3 className="text-sm font-semibold text-white">{channel.channel_name}</h3>{channel.channel_handle && <p className="text-xs text-slate-400">{channel.channel_handle}</p>}</div><button onClick={() => handleDeleteChannel(channel.id)} aria-label={`Delete ${channel.channel_name}`} className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button></div><div>{channel.connected ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30"><CheckCircle2 className="h-3 w-3" /> Connected</span> : <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-300 border border-amber-500/30"><AlertCircle className="h-3 w-3" /> Not Connected</span>}</div><div className="grid grid-cols-3 gap-2 text-xs"><div><div className="text-slate-500">Subscribers</div><div className="font-semibold text-white">{channel.subscriber_count.toLocaleString()}</div></div><div><div className="text-slate-500">Videos</div><div className="font-semibold text-white">{channel.video_count}</div></div><div><div className="text-slate-500">Views</div><div className="font-semibold text-white">{channel.total_views.toLocaleString()}</div></div></div></div>)}</div>}</section>
 
-        {/* Operating Mode Switcher */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/30">
-                <Video className="h-5 w-5" />
-              </div>
-              <div>
-                <h2 className="text-lg font-bold text-white">Active Operating Mode</h2>
-                <p className="text-xs text-slate-400">Select how TubePulse AI fetches channel telemetry data</p>
-              </div>
-            </div>
+      <div className="grid gap-6 xl:grid-cols-2"><section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-5"><h2 className="text-lg font-bold text-white flex items-center gap-2"><Key className="h-5 w-5 text-amber-400" /> API Configuration Status</h2><div className="space-y-3 text-xs"><div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3.5"><span className="text-slate-300 font-medium">YouTube Data API v3</span><span className="inline-flex items-center gap-1 font-semibold text-emerald-400"><CheckCircle2 className="h-4 w-4" /> Server Integration</span></div><div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3.5"><span className="text-slate-300 font-medium">OAuth 2.0 Authentication</span><span className={`inline-flex items-center gap-1 font-semibold ${youtubeStatus.connected ? "text-emerald-400" : "text-amber-400"}`}>{youtubeStatus.connected ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />} {youtubeStatus.connected ? "Connected" : "Ready for OAuth"}</span></div><div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3.5"><span className="text-slate-300 font-medium">YouTube Analytics API Scope</span><span className="inline-flex items-center gap-1 font-semibold text-emerald-400"><CheckCircle2 className="h-4 w-4" /> Requested by OAuth</span></div>{!youtubeStatus.connected && <a href="/api/auth/youtube" className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg transition hover:from-red-500 hover:to-rose-500"><Radio className="h-4 w-4" /> Connect YouTube Channel via Google OAuth 2.0</a>}{youtubeStatus.connected && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-200">OAuth credentials are active in HttpOnly cookies. Tokens are not exposed to browser JavaScript.</div>}</div></section><section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-4"><div className="flex items-center justify-between"><h2 className="text-lg font-bold text-white flex items-center gap-2"><Lock className="h-5 w-5 text-sky-400" /> Environment API Secrets</h2><span className="text-[11px] text-slate-500 font-mono">Server-Side Only</span></div><p className="text-xs text-slate-400 leading-relaxed">API credentials are configured securely through environment variables on the server. They are never exposed in browser code.</p><div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">Client-side code only receives sanitized channel metadata and analytics values. OAuth access and refresh tokens remain HttpOnly.</div></section></div>
 
-            <div className="inline-flex items-center gap-1 rounded-xl bg-slate-950 p-1 border border-slate-800">
-              <button
-                onClick={() => {
-                  setMode("demo");
-                  localStorage.setItem("tubepulse_mode", "demo");
-                  window.dispatchEvent(new Event("tubepulse_mode_changed"));
-                }}
-                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                  mode === "demo" ? "bg-sky-500 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                Demo Mode
-              </button>
-              <button
-                onClick={() => {
-                  setMode("connected");
-                  localStorage.setItem("tubepulse_mode", "connected");
-                  window.dispatchEvent(new Event("tubepulse_mode_changed"));
-                }}
-                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition ${
-                  mode === "connected" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Radio className="h-3.5 w-3.5" />
-                Connected Mode
-              </button>
-            </div>
-          </div>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-6"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><div className="text-[10px] uppercase tracking-[0.2em] font-semibold text-rose-400">Channel Telemetry Summary · {mode === "connected" ? "Connected Mode" : "Demo Mode"}</div><h2 className="text-xl font-bold text-white">{telemetry.title}</h2>{telemetry.customUrl && <p className="mt-1 text-xs text-slate-500">{telemetry.customUrl}</p>}</div><div className="flex items-center gap-2">{loadingTelemetry && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}<div className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300"><Video className="h-3.5 w-3.5 text-rose-400" /> {telemetry.videoCount} Uploaded Videos Analyzed</div></div></div><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="flex items-center justify-between text-xs text-slate-400"><span>Total Views</span><Eye className="h-4 w-4 text-sky-400" /></div><div className="mt-2 text-2xl font-bold font-mono text-white">{telemetry.viewCount.toLocaleString()}</div></div><div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="flex items-center justify-between text-xs text-slate-400"><span>Watch Time (Hours)</span><Clock className="h-4 w-4 text-emerald-400" /></div><div className="mt-2 text-2xl font-bold font-mono text-white">{telemetry.watchTimeHours === null ? "—" : `${telemetry.watchTimeHours.toLocaleString(undefined, { maximumFractionDigits: 1 })} hrs`}</div></div><div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="flex items-center justify-between text-xs text-slate-400"><span>Avg View Duration</span><RefreshCw className="h-4 w-4 text-amber-400" /></div><div className="mt-2 text-2xl font-bold font-mono text-white">{telemetry.avgViewDurationSeconds === null ? "—" : `${Math.floor(telemetry.avgViewDurationSeconds / 60)}m ${telemetry.avgViewDurationSeconds % 60}s`}</div></div><div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="flex items-center justify-between text-xs text-slate-400"><span>Audience Retention</span><Sparkles className="h-4 w-4 text-sky-400" /></div><div className="mt-2 text-2xl font-bold font-mono text-sky-300">{telemetry.avgRetentionPercentage === null ? "—" : `${telemetry.avgRetentionPercentage}%`}</div><div className="mt-1 text-[10px] text-slate-600">Not returned by current channel report</div></div></div><div className="grid gap-4 sm:grid-cols-3"><div className="rounded-xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between"><div><div className="text-xs text-slate-400">Total Likes</div><div className="mt-1 text-lg font-bold font-mono text-white">{telemetry.likes === null ? "—" : telemetry.likes.toLocaleString()}</div></div><ThumbsUp className="h-5 w-5 text-emerald-400" /></div><div className="rounded-xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between"><div><div className="text-xs text-slate-400">Comments & Shares</div><div className="mt-1 text-lg font-bold font-mono text-white">{telemetry.comments === null || telemetry.shares === null ? "—" : (telemetry.comments + telemetry.shares).toLocaleString()}</div></div><Users className="h-5 w-5 text-sky-400" /></div><div className="rounded-xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between"><div><div className="text-xs text-slate-400">Subscriber Net Gain</div><div className="mt-1 text-lg font-bold font-mono text-emerald-400">{derivedNetGain === null ? "—" : `${derivedNetGain >= 0 ? "+" : ""}${derivedNetGain.toLocaleString()}`}</div></div><UserCheck className="h-5 w-5 text-emerald-400" /></div></div></section>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-300 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Database className="h-4 w-4 text-sky-400" />
-              <span>
-                Active Telemetry Source:{" "}
-                <strong className={mode === "connected" ? "text-rose-400" : "text-sky-300"}>
-                  {mode === "connected" ? "Official YouTube Data API v3 & Analytics API" : "Synthetic Demo Telemetry"}
-                </strong>
-              </span>
-            </div>
-            <span className="rounded-full bg-slate-900 border border-slate-800 px-3 py-1 font-mono text-[11px] text-slate-400">
-              Fallback Active: Automatic
-            </span>
-          </div>
-        </section>
-
-        {/* Channel Connections */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-5">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Video className="h-5 w-5 text-sky-400" />
-              Your Channel Connections
-            </h2>
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-sky-400"
-            >
-              <Plus className="h-4 w-4" />
-              Add Channel
-            </button>
-          </div>
-
-          {showAddForm && (
-            <form onSubmit={handleAddChannel} className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">Channel Name</label>
-                <input
-                  type="text"
-                  value={newChannelName}
-                  onChange={(e) => setNewChannelName(e.target.value)}
-                  required
-                  placeholder="e.g. Creator Growth Lab"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">YouTube Handle (optional)</label>
-                <input
-                  type="text"
-                  value={newChannelHandle}
-                  onChange={(e) => setNewChannelHandle(e.target.value)}
-                  placeholder="@yourchannel"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={savingChannel}
-                  className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-sky-400 disabled:opacity-50"
-                >
-                  {savingChannel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  {savingChannel ? "Saving..." : "Save Channel"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAddForm(false)}
-                  className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 transition hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
-
-          {loadingChannels ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
-            </div>
-          ) : channels.length === 0 ? (
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-8 text-center">
-              <Video className="mx-auto h-8 w-8 text-slate-600" />
-              <p className="mt-3 text-sm text-slate-400">No channels connected yet. Add your first YouTube channel to start tracking analytics.</p>
-            </div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {channels.map((channel) => (
-                <div key={channel.id} className="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="text-sm font-semibold text-white">{channel.channel_name}</h3>
-                      {channel.channel_handle && (
-                        <p className="text-xs text-slate-400">{channel.channel_handle}</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleDeleteChannel(channel.id)}
-                      className="rounded-lg p-1.5 text-slate-500 transition hover:bg-rose-500/10 hover:text-rose-400"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {channel.connected ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">
-                        <CheckCircle2 className="h-3 w-3" /> Connected
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold text-amber-300 border border-amber-500/30">
-                        <AlertCircle className="h-3 w-3" /> Not Connected
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div>
-                      <div className="text-slate-500">Subscribers</div>
-                      <div className="font-semibold text-white">{channel.subscriber_count.toLocaleString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-500">Videos</div>
-                      <div className="font-semibold text-white">{channel.video_count}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-500">Views</div>
-                      <div className="font-semibold text-white">{channel.total_views.toLocaleString()}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* API Configuration */}
-        <div className="grid gap-6 xl:grid-cols-2">
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-5">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Key className="h-5 w-5 text-amber-400" />
-              API Configuration Status
-            </h2>
-            <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3.5">
-                <span className="text-slate-300 font-medium">YouTube Data API v3 Key:</span>
-                <span className="inline-flex items-center gap-1 font-semibold text-amber-400">
-                  <AlertCircle className="h-4 w-4" /> Not Configured
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3.5">
-                <span className="text-slate-300 font-medium">OAuth 2.0 Authentication:</span>
-                <span className="inline-flex items-center gap-1 font-semibold text-amber-400">
-                  <AlertCircle className="h-4 w-4" /> Ready for OAuth Login
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3.5">
-                <span className="text-slate-300 font-medium">YouTube Analytics API Scope:</span>
-                <span className="inline-flex items-center gap-1 font-semibold text-amber-400">
-                  <AlertCircle className="h-4 w-4" /> Scope Pending
-                </span>
-              </div>
-              <div className="pt-2">
-                <a
-                  href="/api/auth/youtube"
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg transition hover:from-red-500 hover:to-rose-500"
-                >
-                  <Radio className="h-4 w-4" />
-                  Connect YouTube Channel via Google OAuth 2.0
-                </a>
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Lock className="h-5 w-5 text-sky-400" />
-                Environment API Secrets
-              </h2>
-              <span className="text-[11px] text-slate-500 font-mono">Server-Side Only</span>
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              API credentials are configured securely through environment variables on the server. They are never exposed in browser code.
-            </p>
-          </section>
-        </div>
-
-        {/* Channel Telemetry Panel */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.2em] font-semibold text-rose-400">
-                Channel Telemetry Summary · {mode === "connected" ? "Connected Mode" : "Demo Mode"}
-              </div>
-              <h2 className="text-xl font-bold text-white">{telemetry.title}</h2>
-            </div>
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-950 px-3 py-1 text-xs text-slate-300">
-              <Video className="h-3.5 w-3.5 text-rose-400" />
-              {telemetry.videoCount} Uploaded Videos Analyzed
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Total Views</span>
-                <Eye className="h-4 w-4 text-sky-400" />
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono text-white">{telemetry.viewCount.toLocaleString()}</div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Watch Time (Hours)</span>
-                <Clock className="h-4 w-4 text-emerald-400" />
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono text-white">{telemetry.watchTimeHours.toLocaleString()} hrs</div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Avg View Duration</span>
-                <RefreshCw className="h-4 w-4 text-amber-400" />
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono text-white">{Math.floor(telemetry.avgViewDurationSeconds / 60)}m {telemetry.avgViewDurationSeconds % 60}s</div>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>Audience Retention</span>
-                <Sparkles className="h-4 w-4 text-sky-400" />
-              </div>
-              <div className="mt-2 text-2xl font-bold font-mono text-sky-300">{telemetry.avgRetentionPercentage}%</div>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between">
-              <div>
-                <div className="text-xs text-slate-400">Total Likes</div>
-                <div className="mt-1 text-lg font-bold font-mono text-white">{telemetry.likes.toLocaleString()}</div>
-              </div>
-              <ThumbsUp className="h-5 w-5 text-emerald-400" />
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between">
-              <div>
-                <div className="text-xs text-slate-400">Comments & Shares</div>
-                <div className="mt-1 text-lg font-bold font-mono text-white">{(telemetry.comments + telemetry.shares).toLocaleString()}</div>
-              </div>
-              <Users className="h-5 w-5 text-sky-400" />
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 flex items-center justify-between">
-              <div>
-                <div className="text-xs text-slate-400">Subscriber Net Gain</div>
-                <div className="mt-1 text-lg font-bold font-mono text-emerald-400">
-                  +{telemetry.subscriberGainLoss.gained - telemetry.subscriberGainLoss.lost}
-                </div>
-              </div>
-              <UserCheck className="h-5 w-5 text-emerald-400" />
-            </div>
-          </div>
-        </section>
-
-        {/* Privacy Compliance */}
-        <section className="rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-emerald-950/20 to-slate-950 p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-emerald-400" />
-            <h2 className="text-xl font-bold text-white">Privacy Compliance Mandate</h2>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {PRIVACY_COMPLIANCE_RULES.map((rule) => (
-              <div key={rule.rule} className="rounded-xl border border-emerald-500/20 bg-slate-900/80 p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-400">{rule.rule}</span>
-                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">
-                    {rule.status}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300 leading-relaxed">{rule.details}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-    </main>
+      <section className="rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-emerald-950/20 to-slate-950 p-6 space-y-4"><div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-emerald-400" /><h2 className="text-xl font-bold text-white">Privacy Compliance Mandate</h2></div><div className="grid gap-3 sm:grid-cols-3">{PRIVACY_COMPLIANCE_RULES.map((rule) => <div key={rule.rule} className="rounded-xl border border-emerald-500/20 bg-slate-900/80 p-4 space-y-2"><div className="flex items-center justify-between"><span className="text-xs font-bold text-emerald-400">{rule.rule}</span><span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30">{rule.status}</span></div><p className="text-xs text-slate-300 leading-relaxed">{rule.details}</p></div>)}</div></section>
+    </div></main>
   );
 }
