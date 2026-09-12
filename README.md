@@ -1,37 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TubePulseAI
 
-## Getting Started
+TubePulseAI is a Next.js application for YouTube audience analytics, churn-risk analysis, retention intelligence, and creator telemetry.
 
-First, run the development server:
+## Stack
+
+- Next.js 15 + React 19 + TypeScript
+- Supabase authentication and PostgreSQL with Row Level Security
+- YouTube Data API v3
+- YouTube Analytics API
+- Recharts / Tailwind / Lucide
+- Server-side YouTube OAuth token handling with HttpOnly cookies
+
+## Local development
 
 ```bash
+npm ci
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+See `.env.example`. For a real deployment, configure:
 
-## Learn More
+- `NEXT_PUBLIC_APP_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `YOUTUBE_CLIENT_ID`
+- `YOUTUBE_CLIENT_SECRET`
+- `YOUTUBE_REDIRECT_URI`
+- `YOUTUBE_API_KEY`
+- `NEXT_PUBLIC_DEMO_MODE=false`
 
-To learn more about Next.js, take a look at the following resources:
+Never commit `.env.local`, OAuth secrets, or API keys.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Supabase
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Apply the SQL migrations in `supabase/migrations` to the production project. The current migration enables RLS and scopes channel connections, snapshots, and alert preferences to the authenticated owner.
 
-## Deploy on Vercel
+## YouTube OAuth
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The Google OAuth redirect URI must exactly match:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-# TubePulseAI
+```text
+https://YOUR_DOMAIN/api/auth/callback/youtube
+```
+
+The deployed domain must also be registered in the Google OAuth configuration and the YouTube APIs required by the application must be enabled.
+
+## Production verification
+
+Before release:
+
+```bash
+npm ci
+npm run lint
+npm run build
+npm run start
+```
+
+Then manually verify:
+
+1. Sign up / sign in.
+2. Supabase data is isolated between users.
+3. Connect YouTube through Google OAuth.
+4. Confirm live channel statistics load.
+5. Confirm Analytics API metrics load.
+6. Disconnect YouTube and confirm tokens are cleared/revoked.
+7. Confirm demo mode is not active in production.
+8. Confirm the deployed HTTPS origin matches `NEXT_PUBLIC_APP_URL` and the Google OAuth redirect URI.
+
+## Deployment
+
+TubePulseAI can be deployed as a standard Next.js server application, including Vercel. Production deployment is conditional on completing the environment, Google OAuth, Supabase migration, and local/CI `lint` + `build` verification above.
