@@ -1,50 +1,84 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getYouTubeChannelTelemetry } from "@/lib/youtube/service";
+import { refreshYouTubeAccessToken } from "@/lib/youtube/auth";
+
+async function fetchChannelStats(accessToken: string) {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  const url = new URL("https://www.googleapis.com/youtube/v3/channels");
+  url.searchParams.set("part", "snippet,statistics,contentDetails");
+  url.searchParams.set("mine", "true");
+  if (apiKey) url.searchParams.set("key", apiKey);
+
+  return fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+}
 
 export async function GET(request: NextRequest) {
   const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== "false";
-  const accessToken = request.cookies.get("youtube_access_token")?.value;
 
-  // Fallback to synthetic telemetry if Demo Mode is true or no token exists
-  if (isDemoMode || !accessToken) {
-    const fallbackTelemetry = await getYouTubeChannelTelemetry();
-    return NextResponse.json({
-      mode: "demo",
-      source: "synthetic_telemetry",
-      data: fallbackTelemetry,
-    });
+  if (isDemoMode) {
+    const demoTelemetry = await getYouTubeChannelTelemetry();
+    return NextResponse.json({ mode: "demo", source: "synthetic_telemetry", data: demoTelemetry });
+  }
+
+  let accessToken = request.cookies.get("youtube_access_token")?.value || null;
+  const refreshToken = request.cookies.get("youtube_refresh_token")?.value || null;
+
+  if (!accessToken && refreshToken) {
+    const refreshed = await refreshYouTubeAccessToken(refreshToken);
+    accessToken = refreshed.accessToken;
+  }
+
+  if (!accessToken) {
+    return NextResponse.json(
+      { mode: "connected", source: "youtube_auth_required", error: "YouTube connection is missing or expired." },
+      { status: 401 },
+    );
   }
 
   try {
-    // Official YouTube Data API v3 Channel Request
-    const apiKey = process.env.YOUTUBE_API_KEY;
-    const url = new URL("https://www.googleapis.com/youtube/v3/channels");
-    url.searchParams.set("part", "snippet,statistics,contentDetails");
-    url.searchParams.set("mine", "true");
-    if (apiKey) url.searchParams.set("key", apiKey);
+    let apiRes = await fetchChannelStats(accessToken);
+    let refreshedAccessToken: string | null = null;
 
-    const apiRes = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    if (apiRes.status === 401 && refreshToken) {
+      const refreshed = await refreshYouTubeAccessToken(refreshToken);
+      if (refreshed.accessToken) {
+        refreshedAccessToken = refreshed.accessToken;
+        accessToken = refreshed.accessToken;
+        apiRes = await fetchChannelStats(accessToken);
+      }
+    }
 
     if (!apiRes.ok) {
-      console.warn("[YouTube Stats API] Live request failed, using fallback:", apiRes.statusText);
-      const fallback = await getYouTubeChannelTelemetry();
-      return NextResponse.json({ mode: "connected", source: "fallback_cache", data: fallback });
+      const errorText = await apiRes.text().catch(() => "");
+      console.warn("[YouTube Stats API] Live request failed:", apiRes.status, errorText.slice(0, 300));
+      return NextResponse.json(
+        {
+          mode: "connected",
+          source: "youtube_api_error",
+          error: "YouTube Data API request failed.",
+          status: apiRes.status,
+        },
+        { status: apiRes.status >= 400 && apiRes.status < 600 ? apiRes.status : 502 },
+      );
     }
 
     const data = await apiRes.json();
     const item = data.items?.[0];
 
     if (!item) {
-      const fallback = await getYouTubeChannelTelemetry();
-      return NextResponse.json({ mode: "connected", source: "fallback_cache", data: fallback });
+      return NextResponse.json(
+        { mode: "connected", source: "youtube_channel_missing", error: "No YouTube channel was returned for this account." },
+        { status: 404 },
+      );
     }
 
     const stats = item.statistics;
     const snippet = item.snippet;
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       mode: "connected",
       source: "official_youtube_api_v3",
       data: {
@@ -52,22 +86,28 @@ export async function GET(request: NextRequest) {
         title: snippet.title,
         customUrl: snippet.customUrl || `@${snippet.title.toLowerCase().replace(/\s+/g, "")}`,
         publishedAt: snippet.publishedAt,
-        viewCount: parseInt(stats.viewCount || "0", 10),
-        subscriberCount: parseInt(stats.subscriberCount || "0", 10),
-        videoCount: parseInt(stats.videoCount || "0", 10),
-        watchTimeHours: Math.round(parseInt(stats.viewCount || "0", 10) * 0.15),
-        avgViewDurationSeconds: 380,
-        avgRetentionPercentage: 64.5,
-        likes: Math.round(parseInt(stats.viewCount || "0", 10) * 0.04),
-        comments: Math.round(parseInt(stats.viewCount || "0", 10) * 0.008),
-        shares: Math.round(parseInt(stats.viewCount || "0", 10) * 0.005),
-        subscriberGainLoss: { gained: 2800, lost: 450 },
-        returningViewerMetricStatus: "Aggregated Channel Estimate",
+        viewCount: Number.parseInt(stats.viewCount || "0", 10),
+        subscriberCount: Number.parseInt(stats.subscriberCount || "0", 10),
+        videoCount: Number.parseInt(stats.videoCount || "0", 10),
       },
     });
+
+    if (refreshedAccessToken) {
+      response.cookies.set("youtube_access_token", refreshedAccessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 3600,
+        path: "/",
+      });
+    }
+
+    return response;
   } catch (err) {
     console.error("[YouTube Stats API Exception]", err);
-    const fallback = await getYouTubeChannelTelemetry();
-    return NextResponse.json({ mode: "demo", source: "exception_fallback", data: fallback });
+    return NextResponse.json(
+      { mode: "connected", source: "youtube_api_exception", error: "Unable to reach YouTube Data API." },
+      { status: 502 },
+    );
   }
 }
