@@ -1,0 +1,83 @@
+{
+  "algorithm": "Logistic Regression",
+  "weights": [
+    -0.11492609529083024,
+    0.3343066796559874,
+    -0.35030884412410057,
+    0.5992172756225524,
+    -0.6436808279175668,
+    0.05258269035090703,
+    0.21595387821083817,
+    -0.15290443054980088,
+    0.33914245944840665,
+    0.07303284675491473,
+    0.9025004523698085,
+    0.014434542846330771,
+    -0.35030884412410007,
+    -0.014434542846330771
+  ],
+  "bias": 0.014434542846330828,
+  "mean": [
+    13.35,
+    13.5,
+    94.25,
+    0.0,
+    6.13,
+    -0.40000000000000013,
+    9.910000000000002,
+    -0.005,
+    53.71,
+    25.84,
+    59.04,
+    0.6666666666666659,
+    0.5375,
+    0.600000000000001
+  ],
+  "std": [
+    8.697844560579357,
+    8.616843969807043,
+    46.91148580038795,
+    2.1213203435596424,
+    3.4348362406379724,
+    0.8944271909999151,
+    5.733925357030732,
+    0.40923709509280815,
+    18.35404315130593,
+    10.39876915793403,
+    18.690061530128784,
+    7.771561172376096e-16,
+    0.21323402636539976,
+    9.992007221626409e-16
+  ],
+  "feature_names": [
+    "recency",
+    "inactivity",
+    "watch_time",
+    "watch_time_trend",
+    "frequency",
+    "frequency_trend",
+    "engagement",
+    "engagement_trend",
+    "average_percentage_viewed",
+    "session_duration",
+    "returning_viewer_rate",
+    "content_preference_score",
+    "sentiment_score",
+    "intent_score"
+  ],
+  "evaluation": {
+    "sample_size": 25,
+    "accuracy": 0.52,
+    "precision": 0.5333,
+    "recall": 0.6154,
+    "f1_score": 0.5714,
+    "roc_auc": 0.5449,
+    "confusion_matrix": {
+      "TP": 8,
+      "TN": 5,
+      "FP": 7,
+      "FN": 5
+    },
+    "evaluation_note": "Evaluation performed on N=25 sample split. Metrics reflect initial synthetic dataset baseline and should be re-evaluated as live telemetry grows."
+  }
+}
