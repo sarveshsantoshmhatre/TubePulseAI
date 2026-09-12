@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Bell, CheckCircle2, ChevronDown, Info, Search, Settings, User, X } from "lucide-react";
+import { AlertTriangle, Bell, CheckCircle2, ChevronDown, Info, LogOut, Search, Settings, User, X } from "lucide-react";
+import { useAuth } from "@/components/auth-provider";
 
 type TopbarProps = {
   channel: string;
@@ -23,9 +24,13 @@ export function Topbar({
   setSearchTerm,
 }: TopbarProps) {
   const router = useRouter();
+  const { user, signOut } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [operatingMode, setOperatingMode] = useState<"demo" | "connected">("connected");
+
+  const userInitials = user?.email ? user.email.slice(0, 2).toUpperCase() : "TP";
+  const displayName = user?.email ? user.email.split("@")[0] : "Creator";
 
   useEffect(() => {
     const syncMode = () => {
@@ -206,11 +211,11 @@ export function Topbar({
               className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 hover:border-slate-600 transition"
             >
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-500/15 text-xs font-semibold text-sky-300">
-                AM
+                {userInitials}
               </div>
               <div className="hidden text-left text-xs sm:block">
-                <div className="font-medium text-slate-100">Creator Ops</div>
-                <div className="text-slate-400">Settings</div>
+                <div className="font-medium text-slate-100">{displayName}</div>
+                <div className="text-slate-400">{user?.email ?? ""}</div>
               </div>
               <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
             </button>
@@ -218,8 +223,8 @@ export function Topbar({
             {showUserMenu && (
               <div className="absolute right-0 top-12 z-50 w-56 rounded-xl border border-slate-800 bg-slate-900 p-2 shadow-2xl">
                 <div className="border-b border-slate-800 px-3 py-2">
-                  <div className="text-xs font-semibold text-slate-200">Creator Ops Admin</div>
-                  <div className="text-[11px] text-slate-400">admin@tubepulse.ai</div>
+                  <div className="text-xs font-semibold text-slate-200">{displayName}</div>
+                  <div className="text-[11px] text-slate-400">{user?.email ?? ""}</div>
                 </div>
                 <div className="py-1">
                   <button
@@ -241,6 +246,17 @@ export function Topbar({
                   >
                     <User className="h-3.5 w-3.5" />
                     High-Risk Viewers
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setShowUserMenu(false);
+                      await signOut();
+                      router.push("/auth/login");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-500/10 hover:text-rose-200"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    Sign Out
                   </button>
                 </div>
               </div>

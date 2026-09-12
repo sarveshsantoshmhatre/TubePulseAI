@@ -54,8 +54,10 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto rounded-xl border border-slate-800 bg-slate-900/80 p-4">
-        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-400">Demo mode</div>
-        <div className="text-sm text-slate-200">Synthetic audience telemetry only</div>
+        <Link href="/settings" className="flex items-center gap-2 text-sm font-medium text-slate-300 transition hover:text-slate-50">
+          <Settings className="h-4 w-4" />
+          Channel Settings
+        </Link>
       </div>
     </aside>
   );
