@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { calculateDisengagementPrediction } from "@/lib/prediction";
 import type { Viewer } from "@/lib/types";
 
-// Numerical feature mapping helper
 const INTENT_SCORES: Record<string, number> = {
   "Praising content": 1.0,
   "Expressing interest": 0.8,
@@ -20,9 +19,13 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const rawViewer: Partial<Viewer> = body.viewer || body;
+    const referenceDate = new Date();
 
-    // Feature extraction matching Python ML pipeline
-    const recency = Number(rawViewer.lastActive ? (new Date("2026-09-30").getTime() - new Date(rawViewer.lastActive).getTime()) / 86400000 : 5);
+    const recency = Number(
+      rawViewer.lastActive
+        ? (referenceDate.getTime() - new Date(rawViewer.lastActive).getTime()) / 86400000
+        : 5,
+    );
     const inactivity = Number(rawViewer.watchFrequency ? 30 / Math.max(rawViewer.watchFrequency, 1) : 6);
     const watchTime = Number(rawViewer.watchTimeMinutes || 60);
     const frequency = Number(rawViewer.watchFrequency || 4);
@@ -34,7 +37,6 @@ export async function POST(request: Request) {
     const intentStr = String(rawViewer.intent || "Exploring");
     const intentScore = INTENT_SCORES[intentStr] || 0.5;
 
-    // Standardized logistic model decision weights (trained in ML pipeline)
     const logit =
       0.45 * (recency / 15) +
       0.35 * (inactivity / 20) -
@@ -56,16 +58,16 @@ export async function POST(request: Request) {
     else if (riskScore >= 60) riskLevel = "High";
     else if (riskScore >= 40) riskLevel = "Medium";
 
-    // Feature contribution analysis
     const contributingFeatures = [
       { feature: "recency", description: "Inactivity days since last active view", impact_score: Number((recency / 15).toFixed(2)) },
       { feature: "avgPercentageViewed", description: "Low video completion rate (<45%)", impact_score: Number(((100 - avgPercentageViewed) / 100).toFixed(2)) },
       { feature: "returnRate", description: "Declining return visit frequency", impact_score: Number(((100 - returnRate) / 100).toFixed(2)) },
-      { feature: "sentiment", description: "Negative comment feedback sentiment", impact_score: Number(((1 - sentimentScore)).toFixed(2)) },
+      { feature: "sentiment", description: "Negative comment feedback sentiment", impact_score: Number((1 - sentimentScore).toFixed(2)) },
     ].sort((a, b) => b.impact_score - a.impact_score);
 
-    // Dynamic fallback to deterministic prediction engine if demo viewer object is passed
-    const fallbackPrediction = rawViewer.id ? calculateDisengagementPrediction(rawViewer as Viewer) : null;
+    const fallbackPrediction = rawViewer.id
+      ? calculateDisengagementPrediction(rawViewer as Viewer, { referenceDate })
+      : null;
 
     return NextResponse.json({
       viewer_id: rawViewer.id || "VIEW-ML-ANON",
@@ -75,8 +77,8 @@ export async function POST(request: Request) {
       contributing_features: contributingFeatures,
       fallback_prediction: fallbackPrediction,
       ml_architecture: {
-        status: "Production ML Pipeline Active",
-        algorithm: "Logistic Regression (with Random Forest & XGBoost prepared)",
+        status: "Deterministic risk model active",
+        algorithm: "Weighted logistic risk model",
         features_evaluated: 14,
         python_service_compatible: true,
       },
@@ -84,7 +86,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json(
       { error: "Invalid prediction payload", details: (error as Error).message },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }
