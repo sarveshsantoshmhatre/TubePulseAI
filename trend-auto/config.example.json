@@ -1,0 +1,32 @@
+{
+  "trendSources": {
+    "rss": true,
+    "newsApi": false,
+    "reddit": false,
+    "youtube": true
+  },
+  "topics": ["technology", "AI", "software", "science"],
+  "language": "en",
+  "region": "IN",
+  "video": {
+    "format": "vertical-9x16",
+    "durationSeconds": 45,
+    "voice": "configurable",
+    "provider": "configurable"
+  },
+  "publishing": {
+    "requireApproval": true,
+    "platforms": {
+      "youtube": true,
+      "instagram": false,
+      "facebook": false,
+      "tiktok": false,
+      "linkedin": false,
+      "x": false
+    }
+  },
+  "schedule": {
+    "trendScanMinutes": 30,
+    "maxApprovedPostsPerDay": 3
+  }
+}
